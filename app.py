@@ -1,6 +1,7 @@
 import chainlit as cl
 from openai import AsyncOpenAI
 import os
+import base64
 
 
 def get_openai_client():
@@ -36,6 +37,39 @@ else:
 async def on_message(message: cl.Message):
     history = cl.user_session.get("history", [])
     history.append({"role": "user", "content": message.content})
+
+    # parse images
+    images = (
+        [file for file in message.elements if "image" in file.mime]
+        if message.elements
+        else []
+    )
+
+    if images:
+        # read the first image and encode to base64
+        first_image = images[0]
+        with open(first_image.path, "rb") as image_file:
+            base64_image = base64.b64encode(image_file.read()).decode("utf-8")
+        image_url = f"data:image/jpeg;base64,{base64_image}"
+
+        history.append(
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            message.content
+                            if message.content
+                            else "What's in this image?"
+                        ),
+                    },
+                    {"type": "image_url", "image_url": {"url": image_url}},
+                ],
+            }
+        )
+    else:
+        history.append({"role": "user", "content": message.content})
 
     response_message = cl.Message(content="")
     await response_message.send()
