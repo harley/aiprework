@@ -2,6 +2,7 @@ import chainlit as cl
 from openai import AsyncOpenAI
 import os
 import base64
+import boto3
 
 
 def get_openai_client():
@@ -33,6 +34,30 @@ else:
     client, model_kwargs = get_runpod_client()
 
 
+# Initialize S3 client
+s3_client = boto3.client(
+    "s3",
+    aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+    aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+    region_name=os.getenv("AWS_REGION"),
+)
+bucket_name = os.getenv("S3_BUCKET_NAME")
+
+
+def upload_to_s3(file_path, file_name):
+    try:
+        s3_client.upload_file(file_path, bucket_name, file_name)
+        s3_url = s3_client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": bucket_name, "Key": file_name},
+            ExpiresIn=3600,  # URL expires in 1 hour
+        )
+        return s3_url
+    except Exception as e:
+        print(f"Error uploading to S3: {e}")
+        return None
+
+
 @cl.on_message
 async def on_message(message: cl.Message):
     history = cl.user_session.get("history", [])
@@ -46,11 +71,15 @@ async def on_message(message: cl.Message):
     )
 
     if images:
-        # read the first image and encode to base64
-        first_image = images[0]
-        with open(first_image.path, "rb") as image_file:
-            base64_image = base64.b64encode(image_file.read()).decode("utf-8")
-        image_url = f"data:image/jpeg;base64,{base64_image}"
+        image_urls = []
+        for image in images:
+            try:
+                s3_url = upload_to_s3(image.path, os.path.basename(image.path))
+                if s3_url:
+                    # print(f"Debug: image loaded to {s3_url}")
+                    image_urls.append(s3_url)
+            except Exception as e:
+                print(f"Error processing image {image.path}: {e}")
 
         history.append(
             {
@@ -61,13 +90,17 @@ async def on_message(message: cl.Message):
                         "text": (
                             message.content
                             if message.content
-                            else "What's in this image?"
+                            else "What's in these images?"
                         ),
                     },
-                    {"type": "image_url", "image_url": {"url": image_url}},
+                    *[
+                        {"type": "image_url", "image_url": {"url": url}}
+                        for url in image_urls
+                    ],
                 ],
             }
         )
+
     else:
         history.append({"role": "user", "content": message.content})
 
