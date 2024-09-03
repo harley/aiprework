@@ -13,11 +13,14 @@ model_kwargs = {"model": "chatgpt-4o-latest", "temperature": 0.5, "max_tokens": 
 
 @cl.on_message
 async def on_message(message: cl.Message):
+    history = cl.user_session.get("history", [])
+    history.append({"role": "user", "content": message.content})
+
     response_message = cl.Message(content="")
     await response_message.send()
 
     stream = await client.chat.completions.create(
-        messages=[{"role": "user", "content": message.content}],
+        messages=history,
         stream=True,
         **model_kwargs,
     )
@@ -27,3 +30,7 @@ async def on_message(message: cl.Message):
             await response_message.stream_token(token)
 
     await response_message.update()
+
+    ai_response = {"role": "assistant", "content": response_message.content}
+    history.append(ai_response)
+    cl.user_session.set("history", history)
